@@ -2,10 +2,11 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 from diffusers import FluxPipeline
+from uuid import uuid4
 import torch
 import os
-from uuid import uuid4
 
 # === CONFIG ===
 API_KEY = "wildmind_5879fcd4a8b94743b3a7c8c1a1b4"
@@ -13,7 +14,7 @@ OUTPUT_DIR = "generated"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # === LOAD FLUX MODEL ===
-print("🔄 Loading FLUX Dev model...")
+print("🔄 Loading FLUX Dev pipeline...")
 pipe = FluxPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-dev",
     torch_dtype=torch.float16
@@ -34,35 +35,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static images
+# Serve saved images statically
 app.mount("/images", StaticFiles(directory=OUTPUT_DIR), name="images")
 
-# === Input schema ===
+# === Request schema ===
 class PromptRequest(BaseModel):
     prompt: str
+    height: int = 512
+    width: int = 512
+    steps: int = 50
+    guidance: float = 6.5
+    seed: int = 42
 
 # === /flux endpoint ===
 @app.post("/flux")
-async def generate_flux(request: Request, body: PromptRequest):
+async def generate_flux_image(request: Request, data: PromptRequest):
+    # Validate API Key
     api_key = request.headers.get("x-api-key")
     if api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    prompt = body.prompt.strip()
-    if not prompt:
+    if not data.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt is empty")
 
+    generator = torch.manual_seed(data.seed)
     image = pipe(
-        prompt=prompt,
-        height=512,
-        width=512,
-        guidance_scale=6.5,
-        num_inference_steps=50,
-        generator=torch.manual_seed(42)
+        prompt=data.prompt,
+        height=data.height,
+        width=data.width,
+        guidance_scale=data.guidance,
+        num_inference_steps=data.steps,
+        generator=generator
     ).images[0]
 
+    # Save image to /generated directory
     filename = f"{uuid4().hex}.png"
     filepath = os.path.join(OUTPUT_DIR, filename)
     image.save(filepath)
 
-    return {"image_url": f"https://api.wildmindai.com/images/{filename}"}
+    return JSONResponse({"image_url": f"https://api.wildmindai.com/images/{filename}"})
