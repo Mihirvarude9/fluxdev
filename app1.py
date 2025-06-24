@@ -49,7 +49,7 @@ class PromptRequest(BaseModel):
     seed: int = 42
 
 # === /flux/generate endpoint ===
-@app.post("/flux/generate")
+@app.post("/flux")
 async def generate_flux_image(request: Request, data: PromptRequest):
     # API Key check
     api_key = request.headers.get("x-api-key")
