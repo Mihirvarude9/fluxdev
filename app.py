@@ -1,8 +1,8 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from diffusers import FluxPipeline
 from uuid import uuid4
 import torch
@@ -10,13 +10,14 @@ import os
 
 # === CONFIG ===
 API_KEY = "wildmind_5879fcd4a8b94743b3a7c8c1a1b4"
-OUTPUT_DIR = "generated"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "generated")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # === FastAPI instance ===
 app = FastAPI()
 
-# === CORSMiddleware must be added before routes ===
+# === Enable CORS for frontend ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://www.wildmindai.com"],  # Your frontend domain
@@ -25,8 +26,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === Serve images ===
-app.mount("/images", StaticFiles(directory=OUTPUT_DIR), name="images")
+# ✅ Serve static images under /flux/images
+app.mount("/flux/images", StaticFiles(directory=OUTPUT_DIR), name="flux-images")
 
 # === Load FLUX Model ===
 print("🔄 Loading FLUX Dev pipeline...")
@@ -47,8 +48,8 @@ class PromptRequest(BaseModel):
     guidance: float = 6.5
     seed: int = 42
 
-# === /flux endpoint ===
-@app.post("/flux")
+# === /flux/generate endpoint ===
+@app.post("/flux/generate")
 async def generate_flux_image(request: Request, data: PromptRequest):
     # API Key check
     api_key = request.headers.get("x-api-key")
@@ -72,4 +73,9 @@ async def generate_flux_image(request: Request, data: PromptRequest):
     filepath = os.path.join(OUTPUT_DIR, filename)
     image.save(filepath)
 
-    return JSONResponse({"image_url": f"https://api.wildmindai.com/images/{filename}"})
+    print("✅ Image saved:", filepath)
+
+    # ✅ Return the public URL for the frontend
+    return JSONResponse({
+        "image_url": f"https://api.wildmindai.com/flux/images/{filename}"
+    })
