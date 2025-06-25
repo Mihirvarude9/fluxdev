@@ -1,30 +1,24 @@
-"""
-Flux Dev image-generation backend
---------------------------------
-Runs on :  http://127.0.0.1:7863
-Public:   https://api.wildmindai.com/flux
-"""
+import os
+from uuid import uuid4
 
+import torch
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from uuid import uuid4
-import torch, os
-from diffusers import DiffusionPipeline   # generic loader
+from diffusers import FluxPipeline
 
-# ---------- CONFIG ----------
+# ────────────────────────────────────── CONFIG
 API_KEY  = "wildmind_5879fcd4a8b94743b3a7c8c1a1b4"
 MODEL_ID = "black-forest-labs/FLUX.1-dev"
-
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(BASE_DIR, "generated_flux")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "generated_flux")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ---------- APP ----------
+# ────────────────────────────────────── APP
 app = FastAPI()
 
+# CORS for your production frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://www.wildmindai.com"],
@@ -33,39 +27,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Make images downloadable at  https://api.wildmindai.com/flux/images/<file>.png
 app.mount("/flux/images", StaticFiles(directory=OUTPUT_DIR), name="flux-images")
 
-# ---------- LOAD MODEL ----------
-print("🔄 Loading FLUX Dev (this can take ~1-2 min)…")
-pipe = DiffusionPipeline.from_pretrained(
-    MODEL_ID,
-    torch_dtype=torch.float16,
-    variant="fp16",           # repo ships fp16 weights
-    use_safetensors=True,
-    trust_remote_code=True    # required for custom FluxPipeline
-)
+# ────────────────────────────────────── MODEL
+print("🔄 Loading FLUX-Dev…")
+pipe = FluxPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.float16)
 pipe.to("cuda")
-pipe.enable_sequential_cpu_offload()      # extra VRAM savings
-torch.cuda.empty_cache()
-print("✅ FLUX Dev ready!")
+pipe.enable_model_cpu_offload()
+print("✅ FLUX-Dev loaded!")
 
-# ---------- SCHEMA ----------
+# ────────────────────────────────────── Pydantic schema
 class PromptRequest(BaseModel):
     prompt: str
-    height: int = 512
-    width:  int = 512
-    steps: int = 50
+    height:   int = 512
+    width:    int = 512
+    steps:    int = 50
     guidance: float = 6.5
-    seed: int = 42
+    seed:     int = 42
 
-# ---------- ROUTES ----------
-@app.get("/flux/ping")
+# ────────────────────────────────────── Routes
+@app.get("/ping")
 def ping():
     return {"status": "ok"}
 
-@app.post("/flux")
-async def generate_flux(request: Request, body: PromptRequest):
-    # --- Auth ---------------------------------------------------
+@app.post("/generate")
+async def generate(request: Request, body: PromptRequest):
+    # ── API-key check ─────────────────
     if request.headers.get("x-api-key") != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -73,24 +61,22 @@ async def generate_flux(request: Request, body: PromptRequest):
     if not prompt:
         raise HTTPException(status_code=400, detail="Prompt is empty")
 
-    # --- Generate ----------------------------------------------
-    generator = torch.Generator(device="cuda").manual_seed(body.seed)
-    result = pipe(
+    # ── Image generation ──────────────
+    image = pipe(
         prompt,
         height=body.height,
         width=body.width,
-        guidance_scale=body.guidance,
         num_inference_steps=body.steps,
-        generator=generator
-    )
-    image = result.images[0]
+        guidance_scale=body.guidance,
+        generator=torch.manual_seed(body.seed),
+    ).images[0]
 
-    # --- Save & respond ----------------------------------------
-    filename = f"{uuid4().hex}.png"
+    # ── Save & return URL ─────────────
+    filename  = f"{uuid4().hex}.png"
     filepath  = os.path.join(OUTPUT_DIR, filename)
     image.save(filepath)
-    print(f"✅ Saved ⇒ {filepath}")
+    print("🖼️  saved", filepath)
 
-    return JSONResponse({
-        "image_url": f"https://api.wildmindai.com/flux/images/{filename}"
-    })
+    return JSONResponse(
+        {"image_url": f"https://api.wildmindai.com/flux/images/{filename}"}
+    )
