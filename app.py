@@ -50,14 +50,14 @@ app.add_middleware(
 )
 
 # ✅ Serve static images at /medium/images
-app.mount("/medium/images", StaticFiles(directory=OUTPUT_DIR), name="medium-images")
+app.mount("/fluxdev/images", StaticFiles(directory=OUTPUT_DIR), name="medium-images")
 
 # === Request Schema ===
 class PromptRequest(BaseModel):
     prompt: str
 
 # === /medium endpoint ===
-@app.post("/medium")
+@app.post("/fluxdev")
 async def generate_medium(request: Request, body: PromptRequest):
     api_key = request.headers.get("x-api-key")
     if api_key != API_KEY:
@@ -80,4 +80,4 @@ async def generate_medium(request: Request, body: PromptRequest):
     print("✅ Saved image:", filepath)
 
     # ✅ Return image URL that matches mounted path
-    return {"image_url": f"https://api.wildmindai.com/medium/images/{filename}"}
+    return {"image_url": f"https://api.wildmindai.com/fluxdev/images/{filename}"}
