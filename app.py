@@ -51,7 +51,7 @@ class PromptRequest(BaseModel):
 def ping():
     return {"status": "ok"}
 
-@app.post("/generate")
+@app.post("/flux/generate")
 async def generate(request: Request, body: PromptRequest):
     # ── API-key check ─────────────────
     if request.headers.get("x-api-key") != API_KEY:
@@ -78,5 +78,5 @@ async def generate(request: Request, body: PromptRequest):
     print("🖼️  saved", filepath)
 
     return JSONResponse(
-        {"image_url": f"https://api.wildmindai.com/flux/images/{filename}"}
+        {"image_url": f"https://api.wildmindai.com/flux/generate/images/{filename}"}
     )
