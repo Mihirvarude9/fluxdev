@@ -1,8 +1,8 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 from diffusers import FluxPipeline
 from uuid import uuid4
 import torch
@@ -13,22 +13,22 @@ API_KEY = "wildmind_5879fcd4a8b94743b3a7c8c1a1b4"
 OUTPUT_DIR = "generated"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# === FastAPI Setup ===
+# === FastAPI instance ===
 app = FastAPI()
 
-# Enable CORS for frontend domain
+# === CORSMiddleware must be added before routes ===
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://www.wildmindai.com"],
+    allow_origins=["https://www.wildmindai.com"],  # Your frontend domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Serve static images
+# === Serve images ===
 app.mount("/images", StaticFiles(directory=OUTPUT_DIR), name="images")
 
-# === Load FLUX Dev Model ===
+# === Load FLUX Model ===
 print("🔄 Loading FLUX Dev pipeline...")
 pipe = FluxPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-dev",
@@ -39,7 +39,7 @@ pipe.enable_model_cpu_offload()
 print("✅ FLUX Dev model ready!")
 
 # === Input Schema ===
-class PromptInput(BaseModel):
+class PromptRequest(BaseModel):
     prompt: str
     height: int = 512
     width: int = 512
@@ -47,22 +47,20 @@ class PromptInput(BaseModel):
     guidance: float = 6.5
     seed: int = 42
 
-# === Image Generation Endpoint ===
+# === /flux endpoint ===
 @app.post("/flux")
-async def generate_flux(request: Request, data: PromptInput):
-    # API key check
+async def generate_flux_image(request: Request, data: PromptRequest):
+    # API Key check
     api_key = request.headers.get("x-api-key")
     if api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    prompt = data.prompt.strip()
-    if not prompt:
+    if not data.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt is empty")
 
     generator = torch.manual_seed(data.seed)
-
     image = pipe(
-        prompt=prompt,
+        prompt=data.prompt,
         height=data.height,
         width=data.width,
         guidance_scale=data.guidance,
@@ -70,8 +68,11 @@ async def generate_flux(request: Request, data: PromptInput):
         generator=generator
     ).images[0]
 
+    # Save to disk with a unique name
     filename = f"{uuid4().hex}.png"
     filepath = os.path.join(OUTPUT_DIR, filename)
     image.save(filepath)
 
-    return JSONResponse({"image_url": f"https://api.wildmindai.com/images/{filename}"})
+    # Return public URL
+    return JSONResponse({"image_url": f"https://api.wildmindai.com/flux/images/{filename}"})
+
