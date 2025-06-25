@@ -82,7 +82,7 @@ async def generate_fluxdev(request: Request, body: PromptRequest):
         # Return response with updated image URL path
         return JSONResponse(
             content={
-                "image_url": f"https://api.wildmindai.com/images/{fname}"
+                "image_url": f"https://api.wildmindai.com/fluxdev/images/{fname}"
             },
             headers={
                 "Access-Control-Allow-Origin": "https://www.wildmindai.com",
