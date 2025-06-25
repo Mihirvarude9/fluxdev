@@ -1,78 +1,86 @@
+"""
+Run with:
+    uvicorn flux_app:app --host 0.0.0.0 --port 7863
+"""
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 from fastapi.responses import JSONResponse
-from diffusers import FluxPipeline
+from pydantic import BaseModel
 from uuid import uuid4
-import torch
-import os
+import torch, os
+from diffusers import FluxPipeline  # keep this import after torch to avoid warnings
 
-# === CONFIG ===
-API_KEY = "wildmind_5879fcd4a8b94743b3a7c8c1a1b4"
-OUTPUT_DIR = "generated"
+# ---------- CONFIG ----------
+API_KEY   = "wildmind_5879fcd4a8b94743b3a7c8c1a1b4"
+MODEL_ID  = "black-forest-labs/FLUX.1-dev"
+
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "generated_flux")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# === FastAPI instance ===
+# ---------- APP ----------
 app = FastAPI()
 
-# === CORSMiddleware must be added before routes ===
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://www.wildmindai.com"],  # Your frontend domain
+    allow_origins=["https://www.wildmindai.com"],  # <- your frontend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# === Serve images ===
-app.mount("/images", StaticFiles(directory=OUTPUT_DIR), name="images")
+# Serve images at /flux/images/...
+app.mount("/flux/images", StaticFiles(directory=OUTPUT_DIR),
+          name="flux-images")
 
-# === Load FLUX Model ===
-print("🔄 Loading FLUX Dev pipeline...")
-pipe = FluxPipeline.from_pretrained(
-    "black-forest-labs/FLUX.1-dev",
-    torch_dtype=torch.float16
-)
+# ---------- LOAD MODEL ----------
+print("🔄 Loading FLUX Dev...")
+pipe = FluxPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.float16)
 pipe.to("cuda")
 pipe.enable_model_cpu_offload()
-print("✅ FLUX Dev model ready!")
+print("✅ FLUX Dev ready!")
 
-# === Input Schema ===
+# ---------- SCHEMAS ----------
 class PromptRequest(BaseModel):
     prompt: str
     height: int = 512
-    width: int = 512
-    steps: int = 50
+    width:  int = 512
+    steps:  int = 50
     guidance: float = 6.5
     seed: int = 42
 
-# === /flux endpoint ===
+# ---------- ROUTES ----------
+@app.get("/flux/ping")
+def ping():                     # tiny health-check
+    return {"status": "ok"}
+
 @app.post("/flux")
-async def generate_flux_image(request: Request, data: PromptRequest):
-    # API Key check
-    api_key = request.headers.get("x-api-key")
-    if api_key != API_KEY:
+async def generate_flux(request: Request, body: PromptRequest):
+    if request.headers.get("x-api-key") != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    if not data.prompt.strip():
+    prompt = body.prompt.strip()
+    if not prompt:
         raise HTTPException(status_code=400, detail="Prompt is empty")
 
-    generator = torch.manual_seed(data.seed)
+    # --- Generate image ---
     image = pipe(
-        prompt=data.prompt,
-        height=data.height,
-        width=data.width,
-        guidance_scale=data.guidance,
-        num_inference_steps=data.steps,
-        generator=generator
+        prompt,
+        height=body.height,
+        width=body.width,
+        guidance_scale=body.guidance,
+        num_inference_steps=body.steps,
+        generator=torch.manual_seed(body.seed)
     ).images[0]
 
-    # Save to disk with a unique name
+    # --- Save & respond ---
     filename = f"{uuid4().hex}.png"
-    filepath = os.path.join(OUTPUT_DIR, filename)
+    filepath  = os.path.join(OUTPUT_DIR, filename)
     image.save(filepath)
+    print(f"✅ Saved: {filepath}")
 
-    # Return public URL
-    return JSONResponse({"image_url": f"https://api.wildmindai.com/flux/images/{filename}"})
-
+    return JSONResponse(
+        {"image_url": f"https://api.wildmindai.com/flux/images/{filename}"}
+    )
